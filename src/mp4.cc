@@ -17,7 +17,7 @@
 */
 
 #include "mp4_common.h"
-
+#include <math.h>
 
 char * ts_arg(const char *param, size_t param_len, const char *key, size_t key_len, size_t *val_len);
 static int mp4_handler(TSCont contp, TSEvent event, void *edata);
@@ -85,7 +85,6 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
 
     // check suffix
     path = TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
-
     if (path == NULL || path_len <= 4) {
         return TSREMAP_NO_REMAP;
 
@@ -95,20 +94,24 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
 
     start = 0;
     query = TSUrlHttpQueryGet(rri->requestBufp, rri->requestUrl, &query_len);
-
-    val = ts_arg(query, query_len, "start", sizeof("start")-1, &val_len);
-    if (val != NULL) {
-        ret = sscanf(val, "%f", &start);
-        if (ret != 1)
-            start = 0;
+    if(query == NULL) {
+       return TSREMAP_NO_REMAP;
     }
 
-    if (start == 0) {
-        return TSREMAP_NO_REMAP;
 
-    } else if (start < 0) {
-        TSHttpTxnSetHttpRetStatus(rh, TS_HTTP_STATUS_BAD_REQUEST);
-        TSHttpTxnErrorBodySet(rh, TSstrdup("Invalid request."), sizeof("Invalid request.")-1, NULL);
+    val = ts_arg(query, query_len, "start", sizeof("start")-1, &val_len);
+
+    if (val != NULL) {
+        ret = sscanf(val, "%f", &start);
+        if (ret != 1 || isinf(start) != 0) {
+            query = "start=0";
+            query_len = 7 ;
+            val = "0";
+            start = 0; //set default start =0 
+            val_len = 1 ; //set val_len =1
+        }
+    }else{
+       return TSREMAP_NO_REMAP;
     }
 
     // reset args
@@ -125,7 +128,7 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
 
     buf_len = sprintf(buf, "%.*s%.*s", left, query, right, query+query_len-right);
     TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, buf, buf_len);
-
+ 
     // remove Accept-Encoding
     ae_field = TSMimeHdrFieldFind(rri->requestBufp, rri->requestHdrp,
                                   TS_MIME_FIELD_ACCEPT_ENCODING, TS_MIME_LEN_ACCEPT_ENCODING);
@@ -142,6 +145,10 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
         TSHandleMLocRelease(rri->requestBufp, rri->requestHdrp, range_field);
     }
 
+
+    if (start <= 0) {
+       return TSREMAP_NO_REMAP;
+    } 
     mc = new Mp4Context(start);
     contp = TSContCreate(mp4_handler, NULL);
     TSContDataSet(contp, mc);
@@ -194,6 +201,7 @@ mp4_cache_lookup_complete(Mp4Context *mc, TSHttpTxn txnp)
     int             obj_status;
     int64_t         n;
 
+
     if (TSHttpTxnCacheLookupStatusGet(txnp, &obj_status) == TS_ERROR) {
         TSError("[%s] Couldn't get cache status of object", __FUNCTION__);
         return;
@@ -241,7 +249,7 @@ mp4_read_response(Mp4Context *mc, TSHttpTxn txnp)
     int64_t         n;
 
     if (TSHttpTxnServerRespGet(txnp, &bufp, &hdrp) != TS_SUCCESS) {
-        TSError("[%s] could not get request os data", __FUNCTION__);
+        TSError("[%s] could not get request os data ", __FUNCTION__);
         return;
     }
 
@@ -276,7 +284,7 @@ mp4_add_transform(Mp4Context *mc, TSHttpTxn txnp)
         return;
 
     mc->mtc = new Mp4TransformContext(mc->start, mc->cl);
-
+   
     TSHttpTxnUntransformedRespCache(txnp, 1);
     TSHttpTxnTransformedRespCache(txnp, 0);
 
@@ -460,9 +468,7 @@ mp4_parse_meta(Mp4TransformContext *mtc, bool body_complete)
     }
 
     TSIOBufferReaderConsume(mtc->dup_reader, avail);
-
     ret = mm->parse_meta(body_complete);
-
     if (ret > 0) {                      // meta success
         mtc->tail = mm->start_pos;
         mtc->content_length = mm->content_length;
@@ -473,7 +479,7 @@ mp4_parse_meta(Mp4TransformContext *mtc, bool body_complete)
         TSIOBufferReaderFree(mtc->dup_reader);
         mtc->dup_reader = NULL;
     }
-
+ 
     return ret;
 }
 
@@ -512,6 +518,7 @@ ts_arg(const char *param, size_t param_len, const char *key, size_t key_len, siz
             return (char*)val;
         }
     }
+
 
     return NULL;
 }

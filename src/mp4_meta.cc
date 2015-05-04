@@ -18,7 +18,6 @@
 
 #include "mp4_meta.h"
 
-
 static mp4_atom_handler mp4_atoms[] = {
     { "ftyp", &Mp4Meta::mp4_read_ftyp_atom },
     { "moov", &Mp4Meta::mp4_read_moov_atom },
@@ -131,6 +130,8 @@ Mp4Meta::post_process_meta()
     BufferHandle    *bh;
     Mp4Trak         *trak;
 
+
+
     if (this->trak_num == 0) {
         return -1;
     }
@@ -159,10 +160,12 @@ Mp4Meta::post_process_meta()
     }
 
     start_offset = cl;
-
+  
     for (i = 0; i < trak_num; i++) {
 
         trak = trak_vec[i];
+    if(start > (trak->duration/trak->timescale)*1000 )
+        return -1;
 
         if (mp4_update_stts_atom(trak) != 0) {
             return -1;
@@ -191,6 +194,7 @@ Mp4Meta::post_process_meta()
             return -1;
         }
 
+
         mp4_update_stbl_atom(trak);
         mp4_update_minf_atom(trak);
         trak->size += trak->mdhd_size;
@@ -218,12 +222,11 @@ Mp4Meta::post_process_meta()
 
     this->moov_size += 8;
 
-    mp4_reader_set_32value(moov_atom.reader, 0, this->moov_size);
+   mp4_reader_set_32value(moov_atom.reader, 0, this->moov_size);
     this->content_length += this->moov_size;
 
     adjustment = this->ftyp_size + this->moov_size +
                  mp4_update_mdat_atom(start_offset) - start_offset;
-
 
     TSIOBufferCopy(out_handle.buffer, mdat_atom.reader,
                    TSIOBufferReaderAvail(mdat_atom.reader), 0);
@@ -1055,7 +1058,6 @@ Mp4Meta::mp4_update_stts_atom(Mp4Trak *trak)
             pass = (uint32_t)(start_time/duration);
             start_sample += pass;
             count -= pass;
-
             goto found;
         }
 
