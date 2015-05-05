@@ -128,4 +128,6 @@ public:
     bool        transform_added;
 };
 
+char mp4_args[1024]={0};
+
 #endif

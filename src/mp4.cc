@@ -22,11 +22,15 @@
 char * ts_arg(const char *param, size_t param_len, const char *key, size_t key_len, size_t *val_len);
 static int mp4_handler(TSCont contp, TSEvent event, void *edata);
 static void mp4_cache_lookup_complete(Mp4Context *mc, TSHttpTxn txnp);
+static void mp4_sourceurl(const char* mp4args);
+static void mp4_reset_request_url(TSHttpTxn txnp);
 static void mp4_read_response(Mp4Context *mc, TSHttpTxn txnp);
 static void mp4_add_transform(Mp4Context *mc, TSHttpTxn txnp);
 static int mp4_transform_entry(TSCont contp, TSEvent event, void *edata);
 static int mp4_transform_handler(TSCont contp, Mp4Context *mc);
 static int mp4_parse_meta(Mp4TransformContext *mtc, bool body_complete);
+
+
 
 
 TSReturnCode
@@ -87,7 +91,6 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     path = TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
     if (path == NULL || path_len <= 4) {
         return TSREMAP_NO_REMAP;
-
     } else if (strncasecmp(path + path_len - 4, ".mp4", 4) != 0) {
         return TSREMAP_NO_REMAP;
     }
@@ -98,6 +101,7 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
        return TSREMAP_NO_REMAP;
     }
 
+    mp4_sourceurl(query); 
 
     val = ts_arg(query, query_len, "start", sizeof("start")-1, &val_len);
 
@@ -116,9 +120,7 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
 
     // reset args
     left = val - sizeof("start") - query;
-    //right = query + query_len - val - val_len;
-    //fix url like test.mp4?start=12&test=aatr&wtfeyqfwvaYTs
-    right =0 ;
+    right = 0;
 
     if (left > 0) {
         left--;
@@ -154,12 +156,22 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     mc = new Mp4Context(start);
     contp = TSContCreate(mp4_handler, NULL);
     TSContDataSet(contp, mc);
-
     TSHttpTxnHookAdd(rh, TS_HTTP_CACHE_LOOKUP_COMPLETE_HOOK, contp);
     TSHttpTxnHookAdd(rh, TS_HTTP_READ_RESPONSE_HDR_HOOK, contp);
+    TSHttpTxnHookAdd(rh, TS_HTTP_SEND_RESPONSE_HDR_HOOK, contp);
     TSHttpTxnHookAdd(rh, TS_HTTP_TXN_CLOSE_HOOK, contp);
+
     return TSREMAP_NO_REMAP;
 }
+
+
+static void  mp4_sourceurl(const char* mp4args)
+{
+   memset(mp4_args,0,1024);
+   for(unsigned int i=0 ; i < strlen(mp4args) ;i++ )
+      mp4_args[i] = mp4args[i];
+}
+
 
 static int
 mp4_handler(TSCont contp, TSEvent event, void *edata)
@@ -175,6 +187,9 @@ mp4_handler(TSCont contp, TSEvent event, void *edata)
         case TS_EVENT_HTTP_CACHE_LOOKUP_COMPLETE:
             mp4_cache_lookup_complete(mc, txnp);
             break;
+        case TS_EVENT_HTTP_SEND_RESPONSE_HDR:
+             mp4_reset_request_url(txnp);
+             break;
 
         case TS_EVENT_HTTP_READ_RESPONSE_HDR:
             mp4_read_response(mc, txnp);
@@ -191,6 +206,33 @@ mp4_handler(TSCont contp, TSEvent event, void *edata)
 
     TSHttpTxnReenable(txnp, TS_EVENT_HTTP_CONTINUE);
     return 0;
+}
+
+static void 
+mp4_reset_request_url(TSHttpTxn txnp)
+{
+      TSMBuffer reqp;
+      TSMLoc hdr_loc = NULL, url_loc = NULL, field_loc = NULL;
+
+      if(TSHttpTxnClientReqGet((TSHttpTxn) txnp, &reqp, &hdr_loc) != TS_SUCCESS)
+         {
+             TSError( "[handle_hook] could not get request data");
+         }
+
+      if(TSHttpHdrUrlGet(reqp, hdr_loc, &url_loc) != TS_SUCCESS)
+         {
+             TSError("[handle_hook] couldn't retrieve request url");
+         }
+
+     if( TSUrlHttpQuerySet(reqp, url_loc, mp4_args, strlen(mp4_args)) == TS_ERROR )
+        TSError("Set TSUrlHttpQuery Error ! "); 
+
+        TSHandleMLocRelease(reqp, hdr_loc, field_loc);
+        if(url_loc)
+            TSHandleMLocRelease(reqp, hdr_loc, url_loc);
+        if(hdr_loc)
+            TSHandleMLocRelease(reqp, TS_NULL_MLOC, hdr_loc);       
+
 }
 
 static void
@@ -251,7 +293,7 @@ mp4_read_response(Mp4Context *mc, TSHttpTxn txnp)
     int64_t         n;
 
     if (TSHttpTxnServerRespGet(txnp, &bufp, &hdrp) != TS_SUCCESS) {
-        TSError("[%s] could not get request os data ", __FUNCTION__);
+        TSError("[%s] could not get request os data", __FUNCTION__);
         return;
     }
 
