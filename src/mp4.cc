@@ -116,7 +116,9 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
 
     // reset args
     left = val - sizeof("start") - query;
-    right = query + query_len - val - val_len;
+    //right = query + query_len - val - val_len;
+    //fix url like test.mp4?start=12&test=aatr&wtfeyqfwvaYTs
+    right =0 ;
 
     if (left > 0) {
         left--;
