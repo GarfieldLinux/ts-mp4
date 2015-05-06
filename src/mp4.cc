@@ -42,7 +42,8 @@ TSRemapInit(TSRemapInterface *api_info, char *errbuf, int errbuf_size)
         snprintf(errbuf, errbuf_size, "[TSRemapInit] - Incorrect size of TSRemapInterface structure");
         return TS_ERROR;
     }
-   
+
+    //ts_mp4  apply for mp4 plugin space via new txn_slot     
     int txn_slot  =-1;
     if (TSHttpArgIndexReserve("ts_mp4", "ts_mp4_descript", &txn_slot) != TS_SUCCESS) {
         TSError("[ts_mp4]  failed to reserve private data slot");
@@ -76,9 +77,8 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     const char          *val;
     int                 ret;
     float               start;
-    char                buf[1024];
-    int                 buf_len;
-    int                 left, right;
+    char                query_url[1024];
+    int                 query_url_len;
     TSMLoc              ae_field, range_field;
     TSCont              contp;
     Mp4Context          *mc;
@@ -98,46 +98,46 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     }
 
     start = 0;
+    //ts_mp4  get the Url query args 
     query = TSUrlHttpQueryGet(rri->requestBufp, rri->requestUrl, &query_len);
     if(query == NULL) {
        return TSREMAP_NO_REMAP;
     }
+       
+    //ts_mp4 MAX url args's length <= 2014 
+    if( query_len > 1024 ) {
+        //TSHttpTxnSetHttpRetStatus(rh, TS_HTTP_STATUS_BAD_REQUEST);
+        //TSHttpTxnErrorBodySet(rh, TSstrdup("URL args too long Invalid request."), sizeof("Url args too long Invalid request.")-1, NULL);
+        TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0);
+        return TSREMAP_NO_REMAP ;
+    }
+    //ts_mp4 copy the query arges data  (query's value is a pointer(char stype)) 
+    query_url_len = sprintf(query_url, "%.*s",query_len, query);
 
     int txn_slot =-1 ;
     const char* descript = "ts_mp4_descript";
     TSHttpArgIndexNameLookup("ts_mp4",&txn_slot,&descript); 
-    TSHttpTxnArgSet(rh, txn_slot, (void *)query);
-    val = ts_arg(query, query_len, "start", sizeof("start")-1, &val_len);
+    TSHttpTxnArgSet(rh, txn_slot, (void *)query_url);
+    val = ts_arg(query_url, query_url_len, "start", sizeof("start")-1, &val_len);
+    //ts_mp4  args "start" found
     if (val != NULL) {
         ret = sscanf(val, "%f", &start);
+        //ts_mp4 abnormal start args
         if (ret != 1 || isinf(start) != 0) {
+            //ts_mp4 reset query args  
             query = "start=0";
             query_len = 7 ;
-            val = "0";
-            start = 0; //set default start =0 
-            val_len = 1 ; //set val_len =1
+            start = 0; //ts_mp4 set default start =0 
         }
     }else{
+    //ts_mp4 args "start" not found 
+       TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0);
        return TSREMAP_NO_REMAP;
     }
 
-    // reset args
-    left = val - sizeof("start") - query;
-    right = 0;
+    //ts_mp4  reset args ""
+    TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0);
 
-    if (left > 0) {
-        left--;
-    }
-
-    if (left == 0 && right > 0) {
-        right--;
-    }
-
-
-    buf_len = sprintf(buf, "%.*s%.*s", left, query, right, query+query_len-right);
-
-    TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, buf, buf_len);
- 
     // remove Accept-Encoding
     ae_field = TSMimeHdrFieldFind(rri->requestBufp, rri->requestHdrp,
                                   TS_MIME_FIELD_ACCEPT_ENCODING, TS_MIME_LEN_ACCEPT_ENCODING);
@@ -154,6 +154,7 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
         TSHandleMLocRelease(rri->requestBufp, rri->requestHdrp, range_field);
     }
 
+    //ts_mp4  Back to the source with no query args(reset args "" before)   
     if (start <= 0) {
        return TSREMAP_NO_REMAP;
     } 
@@ -161,8 +162,10 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     contp = TSContCreate(mp4_handler, NULL);
     TSContDataSet(contp, mc);
 
+    //ts_mp4 hooks 
     TSHttpTxnHookAdd(rh, TS_HTTP_CACHE_LOOKUP_COMPLETE_HOOK, contp);
     TSHttpTxnHookAdd(rh, TS_HTTP_READ_RESPONSE_HDR_HOOK, contp);
+    //ts_mp4 add hooks for reset the query args for access.log(Change logs_xml.config file(%<cquc> ---> %<cquuc>) is another way  ) 
     TSHttpTxnHookAdd(rh, TS_HTTP_SEND_RESPONSE_HDR_HOOK, contp);
     TSHttpTxnHookAdd(rh, TS_HTTP_TXN_CLOSE_HOOK, contp);
 
@@ -183,7 +186,7 @@ mp4_handler(TSCont contp, TSEvent event, void *edata)
         case TS_EVENT_HTTP_CACHE_LOOKUP_COMPLETE:
             mp4_cache_lookup_complete(mc, txnp);
             break;
-
+        //ts_mp4 mp4_reset_request_url function for event TS_EVENT_HTTP_SEND_RESPONSE_HDR
         case TS_EVENT_HTTP_SEND_RESPONSE_HDR:
              mp4_reset_request_url(txnp);
              break;
@@ -210,8 +213,10 @@ mp4_reset_request_url(TSHttpTxn txnp)
 {
       int txn_slot = -1  ;
       const char * description="ts_mp4_descript";
+      //ts_mp4 get the id for space "ts_mp4"
       TSHttpArgIndexNameLookup("ts_mp4", &txn_slot, &description);
 
+      //ts_mp4 Apply Buffer 
       TSMBuffer reqp;    
       TSMLoc hdr_loc = NULL, url_loc = NULL, field_loc = NULL;
 
@@ -223,25 +228,20 @@ mp4_reset_request_url(TSHttpTxn txnp)
          TSError("[ts_mp4] couldn't retrieve request url");
       }
 
+      //ts_mp4 get query old args 
       const char * getargs  = (const char *)TSHttpTxnArgGet(txnp,txn_slot);
-      char data[1024] = {0};
-      for(unsigned int i=0 ;i<strlen(getargs) ; i++) {
-         if(getargs[i] == ' '){
-            data[i] = '\0';
-            break;
-         }
-         data[i] = getargs[i];
+
+      //ts_mp4 set the query args  
+      if(TSUrlHttpQuerySet(reqp, url_loc, getargs, strlen(getargs)) == TS_ERROR) {
+         TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n");  
       }
 
-     if(TSUrlHttpQuerySet(reqp, url_loc, data, strlen(data)) == TS_ERROR) {
-        TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n");  
-     }
-
-     TSHandleMLocRelease(reqp, hdr_loc, field_loc);
-     if(url_loc)
-        TSHandleMLocRelease(reqp, hdr_loc, url_loc);
-     if(hdr_loc)
-        TSHandleMLocRelease(reqp, TS_NULL_MLOC, hdr_loc);       
+      //ts_mp4 Free memory 
+      TSHandleMLocRelease(reqp, hdr_loc, field_loc);
+      if(url_loc)
+         TSHandleMLocRelease(reqp, hdr_loc, url_loc);
+      if(hdr_loc)
+         TSHandleMLocRelease(reqp, TS_NULL_MLOC, hdr_loc);       
 }
 
 static void
@@ -424,7 +424,7 @@ mp4_transform_handler(TSCont contp, Mp4Context *mc)
         mtc->parse_over = true;
         mtc->output.buffer = TSIOBufferCreate();
         mtc->output.reader = TSIOBufferReaderAlloc(mtc->output.buffer);
-
+        //ts_mp4  start time > total 
         if (ret < 0) {
             mtc->output.vio = TSVConnWrite(output_conn, contp, mtc->output.reader, mc->cl);
             mtc->raw_transform = true;

@@ -164,7 +164,7 @@ Mp4Meta::post_process_meta()
     for (i = 0; i < trak_num; i++) {
 
         trak = trak_vec[i];
-
+        //ts_mp4 start time > total time  return -1 ---> download the whole file  
         if(start > (trak->duration/trak->timescale)*1000 )
            return -1;
 
