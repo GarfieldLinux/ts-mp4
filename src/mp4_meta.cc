@@ -164,8 +164,9 @@ Mp4Meta::post_process_meta()
     for (i = 0; i < trak_num; i++) {
 
         trak = trak_vec[i];
-    if(start > (trak->duration/trak->timescale)*1000 )
-        return -1;
+
+        if(start > (trak->duration/trak->timescale)*1000 )
+           return -1;
 
         if (mp4_update_stts_atom(trak) != 0) {
             return -1;
