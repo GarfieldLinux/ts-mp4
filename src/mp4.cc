@@ -22,15 +22,12 @@
 char * ts_arg(const char *param, size_t param_len, const char *key, size_t key_len, size_t *val_len);
 static int mp4_handler(TSCont contp, TSEvent event, void *edata);
 static void mp4_cache_lookup_complete(Mp4Context *mc, TSHttpTxn txnp);
-static void mp4_sourceurl(const char* mp4args);
 static void mp4_reset_request_url(TSHttpTxn txnp);
 static void mp4_read_response(Mp4Context *mc, TSHttpTxn txnp);
 static void mp4_add_transform(Mp4Context *mc, TSHttpTxn txnp);
 static int mp4_transform_entry(TSCont contp, TSEvent event, void *edata);
 static int mp4_transform_handler(TSCont contp, Mp4Context *mc);
 static int mp4_parse_meta(Mp4TransformContext *mtc, bool body_complete);
-
-
 
 
 TSReturnCode
@@ -45,8 +42,11 @@ TSRemapInit(TSRemapInterface *api_info, char *errbuf, int errbuf_size)
         snprintf(errbuf, errbuf_size, "[TSRemapInit] - Incorrect size of TSRemapInterface structure");
         return TS_ERROR;
     }
-
-    return TS_SUCCESS;
+   
+    int txn_slot  =-1;
+    TSHttpArgIndexReserve("ts_mp4", "ts_mp4_descript", &txn_slot);
+ 
+       return TS_SUCCESS;
 }
 
 TSReturnCode
@@ -82,6 +82,7 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     TSCont              contp;
     Mp4Context          *mc;
 
+ 
     method = TSHttpHdrMethodGet(rri->requestBufp, rri->requestHdrp, &method_len);
     if (method != TS_HTTP_METHOD_GET) {
         return TSREMAP_NO_REMAP;
@@ -91,20 +92,23 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     path = TSUrlPathGet(rri->requestBufp, rri->requestUrl, &path_len);
     if (path == NULL || path_len <= 4) {
         return TSREMAP_NO_REMAP;
+
     } else if (strncasecmp(path + path_len - 4, ".mp4", 4) != 0) {
         return TSREMAP_NO_REMAP;
     }
+
 
     start = 0;
     query = TSUrlHttpQueryGet(rri->requestBufp, rri->requestUrl, &query_len);
     if(query == NULL) {
        return TSREMAP_NO_REMAP;
     }
-
-    mp4_sourceurl(query); 
-
+    
+    int txn_slot =-1 ;
+    const char* descript = "ts_mp4_descript";
+    TSHttpArgIndexNameLookup("ts_mp4",&txn_slot,&descript); 
+    TSHttpTxnArgSet(rh, txn_slot, (void *)query);
     val = ts_arg(query, query_len, "start", sizeof("start")-1, &val_len);
-
     if (val != NULL) {
         ret = sscanf(val, "%f", &start);
         if (ret != 1 || isinf(start) != 0) {
@@ -130,6 +134,7 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
         right--;
     }
 
+
     buf_len = sprintf(buf, "%.*s%.*s", left, query, right, query+query_len-right);
     TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, buf, buf_len);
  
@@ -150,6 +155,7 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     }
 
 
+//FIX start <0 都回源的问题
     if (start <= 0) {
        return TSREMAP_NO_REMAP;
     } 
@@ -163,15 +169,6 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
 
     return TSREMAP_NO_REMAP;
 }
-
-
-static void  mp4_sourceurl(const char* mp4args)
-{
-   memset(mp4_args,0,1024);
-   for(unsigned int i=0 ; i < strlen(mp4args) ;i++ )
-      mp4_args[i] = mp4args[i];
-}
-
 
 static int
 mp4_handler(TSCont contp, TSEvent event, void *edata)
@@ -211,28 +208,42 @@ mp4_handler(TSCont contp, TSEvent event, void *edata)
 static void 
 mp4_reset_request_url(TSHttpTxn txnp)
 {
-      TSMBuffer reqp;
+      int txn_slot =-1  ;
+      const char * description="ts_mp4_descript";
+      TSHttpArgIndexNameLookup("ts_mp4", &txn_slot, &description);
+
+      TSMBuffer reqp;    
       TSMLoc hdr_loc = NULL, url_loc = NULL, field_loc = NULL;
 
-      if(TSHttpTxnClientReqGet((TSHttpTxn) txnp, &reqp, &hdr_loc) != TS_SUCCESS)
-         {
-             TSError( "[handle_hook] could not get request data");
-         }
+       if(TSHttpTxnClientReqGet((TSHttpTxn) txnp, &reqp, &hdr_loc) != TS_SUCCESS)
+            {
+                TSError( "[handle_hook] could not get request data");
+            }
 
-      if(TSHttpHdrUrlGet(reqp, hdr_loc, &url_loc) != TS_SUCCESS)
-         {
-             TSError("[handle_hook] couldn't retrieve request url");
-         }
+            if(TSHttpHdrUrlGet(reqp, hdr_loc, &url_loc) != TS_SUCCESS)
+            {
+                TSError("[handle_hook] couldn't retrieve request url");
+            }
 
-     if( TSUrlHttpQuerySet(reqp, url_loc, mp4_args, strlen(mp4_args)) == TS_ERROR )
-        TSError("Set TSUrlHttpQuery Error ! "); 
+      const char * getargs  = (const char *)TSHttpTxnArgGet(txnp,txn_slot);
+      char data[1024] = {0};
+      for(unsigned int i=0 ;i<strlen(getargs) ; i++) {
+         if(getargs[i] == ' '){
+            data[i] = '\0';
+            break;
+         }
+            data[i] = getargs[i];
+      }
+
+     if(TSUrlHttpQuerySet(reqp, url_loc, data, strlen(data)) == TS_ERROR) {
+        TSError("Set TSUrlHttpQuery Error ! \n");  
+     }
 
         TSHandleMLocRelease(reqp, hdr_loc, field_loc);
-        if(url_loc)
-            TSHandleMLocRelease(reqp, hdr_loc, url_loc);
-        if(hdr_loc)
-            TSHandleMLocRelease(reqp, TS_NULL_MLOC, hdr_loc);       
-
+            if(url_loc)
+                TSHandleMLocRelease(reqp, hdr_loc, url_loc);
+            if(hdr_loc)
+                TSHandleMLocRelease(reqp, TS_NULL_MLOC, hdr_loc);       
 }
 
 static void
@@ -329,6 +340,7 @@ mp4_add_transform(Mp4Context *mc, TSHttpTxn txnp)
 
     mc->mtc = new Mp4TransformContext(mc->start, mc->cl);
    
+
     TSHttpTxnUntransformedRespCache(txnp, 1);
     TSHttpTxnTransformedRespCache(txnp, 0);
 
@@ -524,6 +536,8 @@ mp4_parse_meta(Mp4TransformContext *mtc, bool body_complete)
         mtc->dup_reader = NULL;
     }
  
+    //TSError("garfield2 meta information mtc->tail=%d mtc->content_length=%d mtc->meta_length =%d \n",mtc->tail,mtc->content_length,mtc->meta_length);
+
     return ret;
 }
 
