@@ -108,7 +108,10 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     if( query_len > 1024 ) {
         //TSHttpTxnSetHttpRetStatus(rh, TS_HTTP_STATUS_BAD_REQUEST);
         //TSHttpTxnErrorBodySet(rh, TSstrdup("URL args too long Invalid request."), sizeof("Url args too long Invalid request.")-1, NULL);
-        TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0);
+        if (TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0) == TS_ERROR) {
+             TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n"); 
+        }
+
         return TSREMAP_NO_REMAP ;
     }
     //ts_mp4 copy the query arges data  (query's value is a pointer(char stype)) 
@@ -131,12 +134,17 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
         }
     }else{
     //ts_mp4 args "start" not found 
-       TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0);
+       if (TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0) == TS_ERROR) {
+          TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n");  
+       }
+
        return TSREMAP_NO_REMAP;
     }
 
     //ts_mp4  reset args ""
-    TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0);
+    if (TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0) == TS_ERROR) {
+       TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n"); 
+    }
 
     // remove Accept-Encoding
     ae_field = TSMimeHdrFieldFind(rri->requestBufp, rri->requestHdrp,
