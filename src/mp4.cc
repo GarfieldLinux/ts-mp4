@@ -77,8 +77,7 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     const char          *val;
     int                 ret;
     float               start;
-    char                query_url[1024];
-    int                 query_url_len;
+    char*               pointer_query;
     TSMLoc              ae_field, range_field;
     TSCont              contp;
     Mp4Context          *mc;
@@ -114,14 +113,15 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
 
         return TSREMAP_NO_REMAP ;
     }
-    //ts_mp4 copy the query arges data  (query's value is a pointer(char stype)) 
-    query_url_len = sprintf(query_url, "%.*s",query_len, query);
+
+    pointer_query =  (char *)TSmalloc(query_len);
+    memcpy(pointer_query, query, query_len);
 
     int txn_slot =-1 ;
     const char* descript = "ts_mp4_descript";
     TSHttpArgIndexNameLookup("ts_mp4",&txn_slot,&descript); 
-    TSHttpTxnArgSet(rh, txn_slot, (void *)query_url);
-    val = ts_arg(query_url, query_url_len, "start", sizeof("start")-1, &val_len);
+    TSHttpTxnArgSet(rh, txn_slot, (void *)pointer_query);
+    val = ts_arg(query, query_len, "start", sizeof("start")-1, &val_len);
     //ts_mp4  args "start" found
     if (val != NULL) {
         ret = sscanf(val, "%f", &start);
@@ -242,7 +242,8 @@ mp4_reset_request_url(TSHttpTxn txnp)
       if(TSUrlHttpQuerySet(reqp, url_loc, getargs, strlen(getargs)) == TS_ERROR) {
          TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n");  
       }
-
+  
+      TSfree((void *)getargs);
       //ts_mp4 Free memory 
       TSHandleMLocRelease(reqp, hdr_loc, field_loc);
       if(url_loc)
