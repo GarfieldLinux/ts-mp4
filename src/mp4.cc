@@ -127,13 +127,12 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
         ret = sscanf(val, "%f", &start);
         //ts_mp4 abnormal start args
         if (ret != 1 || isinf(start) != 0) {
-            //ts_mp4 reset query args  
-            query = "start=0";
-            query_len = 7 ;
-            start = 0; //ts_mp4 set default start =0 
+           //ts_mp4 set default start =0 
+           start = 0;
         }
     }else{
-    //ts_mp4 args "start" not found 
+       //ts_mp4 args "start" not found
+       //ts_mp4 reset query args "" 
        if (TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0) == TS_ERROR) {
           TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n");  
        }
