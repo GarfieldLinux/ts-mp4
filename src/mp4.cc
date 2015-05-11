@@ -19,7 +19,7 @@
 #include "mp4_common.h"
 #include <math.h>
 
-char * ts_arg(const char *param, size_t param_len, const char *key, size_t key_len, size_t *val_len);
+char * ts_arg(const char *param, size_t param_len, const char *key, size_t key_len, size_t *val_len );
 static int mp4_handler(TSCont contp, TSEvent event, void *edata);
 static void mp4_cache_lookup_complete(Mp4Context *mc, TSHttpTxn txnp);
 static void mp4_reset_request_url(TSHttpTxn txnp);
@@ -74,10 +74,12 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     const char          *method, *query, *path;
     int                 method_len, query_len, path_len;
     size_t              val_len;
-    const char          *val;
-    int                 ret;
+    const char          *val ;
+    int                 ret , left , right;
     float               start;
-    char*               pointer_query;
+    char                buf[104];
+    int                 buf_len;
+    char*               pointer_query = NULL;
     TSMLoc              ae_field, range_field;
     TSCont              contp;
     Mp4Context          *mc;
@@ -114,10 +116,15 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
         return TSREMAP_NO_REMAP ;
     }
 
-    pointer_query =  (char *)TSmalloc(query_len);
-    memcpy(pointer_query, query, query_len);
+    pointer_query =  (char *)TSmalloc(query_len+1);
+    if(pointer_query != NULL) {
+       memcpy(pointer_query, query, query_len);
+       pointer_query[query_len]='\0'; 
+    }else {
+       TSError("TSmalloc apply faild ");
+    }
 
-    int txn_slot =-1 ;
+    int txn_slot  = -1;
     const char* descript = "ts_mp4_descript";
     TSHttpArgIndexNameLookup("ts_mp4",&txn_slot,&descript); 
     TSHttpTxnArgSet(rh, txn_slot, (void *)pointer_query);
@@ -126,24 +133,39 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     if (val != NULL) {
         ret = sscanf(val, "%f", &start);
         //ts_mp4 abnormal start args
-        if (ret != 1 || isinf(start) != 0) {
-           //ts_mp4 set default start =0 
-           start = 0;
-        }
-    }else{
-       //ts_mp4 args "start" not found
-       //ts_mp4 reset query args "" 
-       if (TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0) == TS_ERROR) {
-          TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n");  
-       }
+        if (ret != 1 || isinf(start) != 0 || start <0) {
+           if (TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0) == TS_ERROR) {
+              TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n"); 
+           }  
+           return TSREMAP_NO_REMAP;
+           }else {
+            left = val - sizeof("start") - query;
+            right = query + query_len - val - val_len;
 
+            if (left > 0) {
+               left--;
+            }
+            if (left == 0 && right > 0) {
+               right--;
+            }
+            buf_len = sprintf(buf, "%.*s%.*s", left, query, right, query+query_len-right);
+            TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, buf, buf_len);
+             if(start == 0) {
+                 return TSREMAP_NO_REMAP ;
+             }
+
+        }
+
+           }else {
+       //ts_mp4 args "start" not found
+       //ts_mp4 reset query args ""
+       if (TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0) == TS_ERROR) {
+           TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n"); 
+       }  
        return TSREMAP_NO_REMAP;
     }
 
-    //ts_mp4  reset args ""
-    if (TSUrlHttpQuerySet(rri->requestBufp, rri->requestUrl, "", 0) == TS_ERROR) {
-       TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n"); 
-    }
+    
 
     // remove Accept-Encoding
     ae_field = TSMimeHdrFieldFind(rri->requestBufp, rri->requestHdrp,
@@ -162,9 +184,6 @@ TSRemapDoRemap(void* /* ih ATS_UNUSED */, TSHttpTxn rh, TSRemapRequestInfo *rri)
     }
 
     //ts_mp4  Back to the source with no query args(reset args "" before)   
-    if (start <= 0) {
-       return TSREMAP_NO_REMAP;
-    } 
     mc = new Mp4Context(start);
     contp = TSContCreate(mp4_handler, NULL);
     TSContDataSet(contp, mc);
@@ -236,14 +255,16 @@ mp4_reset_request_url(TSHttpTxn txnp)
       }
 
       //ts_mp4 get query old args 
-      const char * getargs  = (const char *)TSHttpTxnArgGet(txnp,txn_slot);
+      char * getargs  = (char *)TSHttpTxnArgGet(txnp,txn_slot);
 
       //ts_mp4 set the query args  
-      if(TSUrlHttpQuerySet(reqp, url_loc, getargs, strlen(getargs)) == TS_ERROR) {
+      if(TSUrlHttpQuerySet(reqp, url_loc, (const char *)getargs, strlen(getargs)) == TS_ERROR) {
          TSError("[ts_mp4]  Set TSUrlHttpQuery Error ! \n");  
       }
-  
+    
       TSfree((void *)getargs);
+      getargs = NULL; 
+
       //ts_mp4 Free memory 
       TSHandleMLocRelease(reqp, hdr_loc, field_loc);
       if(url_loc)
@@ -563,7 +584,7 @@ ts_arg(const char *param, size_t param_len, const char *key, size_t key_len, siz
 
         p = (char*)memmem(p, last-p, key, key_len);
 
-        if (p == NULL)
+        if (p == NULL) 
             return NULL;
 
         if ((p == param || *(p - 1) == '&') && *(p + key_len) == '=') {
